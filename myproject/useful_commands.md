@@ -12,14 +12,16 @@ To run
 `coverage run --source='.' manage.py test` 
 To report
 `coverage report`
+Full cov + rep:
+`coverage run --source='core' manage.py test core && coverage report -m`
 -----
 
-# pytest + coverage + xdist
+# xdist
 
 from ..folder
 -----
 To run
-`pytest -n auto --cov=core --cov-report=html --cov-report=term`
+`python manage.py test core --parallel auto`
 
 
 
