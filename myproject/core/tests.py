@@ -7,6 +7,7 @@ from core.serializers import PassportSerializerV2
 from django.test import RequestFactory
 from rest_framework.request import Request 
 
+from core.models import Passport, VisaOrder, VisaStorage, OrderApproval
 
 @pytest.fixture
 def api_client():
@@ -37,6 +38,57 @@ def admin_client(api_client, admin_user):
     api_client.credentials(HTTP_AUTHORIZATION=f'Bearer {refresh.access_token}')
     return api_client
 
+@pytest.fixture
+def staff_user(db):
+    #user with 'staff' status
+    return User.objects.create_user(
+        username="staff",
+        email="staff@test.com",
+        password="password123",
+        is_staff=True
+    )
+
+@pytest.fixture
+def staff_client(api_client, staff_user):
+    #authorized client with 'staff' status
+    refresh=RefreshToken.for_user(staff_user)
+    api_client.credentials(HTTP_AUTHORIZATION=f'Bearer {refresh.access_token}')
+    return api_client
+
+@pytest.fixture
+def passport_with_owner(db, user):
+    #passport linked to the user
+    return Passport.objects.create(
+        owner=user,
+        full_name="Test User",
+        passport_number="1234 567890",
+        address="Test Address"
+    )
+
+@pytest.fixture
+def visa_storage(db):
+    #initialized visa storage
+    return VisaStorage.objects.create(
+        total_visas=50,
+        remaining_visas=50
+    )
+
+@pytest.fixture
+def visa_order(db, user, passport_with_owner):
+    #order wiz status 'pending'
+    return VisaOrder.objects.create(
+        user=user,
+        passport_number="1234 567890",
+        status=VisaOrder.Status.PENDING
+    )
+
+@pytest.fixture
+def visa_order_for_staff(db, staff_user, passport_with_owner):
+    return VisaOrder.objects.create(
+        user=staff_user,
+        passport_number="1234 567890",
+        status=VisaOrder.Status.PENDING
+    )
 
 #REGISTER & JWT TESTS
 @pytest.mark.django_db
@@ -144,3 +196,147 @@ class TestStaffPassports:
     def test_normal_user_cannot_access_staff_endpoints(self, user_client):
         res = user_client.get('/api/staff/passports/')
         assert res.status_code == 403
+
+@pytest.mark.django_db
+class TestVisaOrderCreation:
+    #Visa order creation tests
+    def test_create_order_success(self, user_client, passport_with_owner):
+        #succesful order creation with corrrect passport_number
+        data = {"passport_number": "1234 567890"}
+        res = user_client.post('/api/v2/orders/', data)
+        
+        assert res.status_code == 201
+        assert res.data['passport_number'] == "1234 567890"
+        assert res.data['status'] == 'pending'
+        assert VisaOrder.objects.count() == 1
+        assert VisaOrder.objects.first().user.username == "testuser"
+    
+    def test_create_order_invalid_passport(self, user_client):
+        #Error in order creation wiz not existed passport number
+        data = {"passport_number": "NONEXISTENT_PASSPORT"}
+        res = user_client.post('/api/v2/orders/', data)
+        
+        assert res.status_code == 400
+        assert "Passport not found" in str(res.data)
+        assert VisaOrder.objects.count() == 0
+    
+    def test_create_order_unauthorized(self, api_client, passport_with_owner):
+        #Unauthorized user can't create an order
+        data = {"passport_number": "1234 567890"}
+        res = api_client.post('/api/v2/orders/', data)
+        
+        assert res.status_code == 401
+
+@pytest.mark.django_db
+class TestVisaApprovalV1:
+    #Visa approval tests (v1 variand - logic without any checks)
+    
+    def test_approve_v1_success(self, user_client, visa_storage, visa_order):
+        #succesful approve - reduces the amount of visas without checks
+        res = user_client.post(f'/api/v1/orders/{visa_order.id}/approve/', {})
+        
+        assert res.status_code == 200
+        assert res.data['status'] == 'approved'
+        assert res.data['remaining_visas'] == 49
+        
+        # db check
+        visa_storage.refresh_from_db()
+        assert visa_storage.remaining_visas == 49
+        
+        visa_order.refresh_from_db()
+        assert visa_order.status == 'approved'
+        
+        assert OrderApproval.objects.count() == 1
+    
+    def test_approve_v1_can_go_negative(self, user_client, passport_with_owner):
+        #Approval (V1) allows the quantity to go into the - (race condition)
+        # 0 visas
+        visa_storage = VisaStorage.objects.create(
+            total_visas=0,
+            remaining_visas=0
+        )
+        
+        visa_order = VisaOrder.objects.create(
+            user=User.objects.get(username="testuser"),
+            passport_number="1234 567890",
+            status=VisaOrder.Status.PENDING
+        )
+        
+        res = user_client.post(f'/api/v1/orders/{visa_order.id}/approve/', {})
+        
+        assert res.status_code == 200
+        assert res.data['remaining_visas'] == -1
+        
+        visa_storage.refresh_from_db()
+        assert visa_storage.remaining_visas == -1
+
+@pytest.mark.django_db
+class TestVisaApprovalV2:
+    #Visa approval tests (v2 variand - correct logic with checks)
+    
+    def test_approve_v2_success(self, user_client, visa_storage, visa_order):
+        #V2 approval successful with correct quantity check
+        res = user_client.post(f'/api/v2/orders/{visa_order.id}/approve/', {})
+        
+        assert res.status_code == 200
+        assert res.data['status'] == 'approved'
+        assert res.data['remaining_visas'] == 49
+        assert res.data['low_visas'] == False 
+        
+        visa_storage.refresh_from_db()
+        assert visa_storage.remaining_visas == 49
+        
+        visa_order.refresh_from_db()
+        assert visa_order.status == 'approved'
+        
+        assert OrderApproval.objects.count() == 1
+    
+    def test_approve_v2_no_visas_available(self, user_client, passport_with_owner):
+        #Approval v2 test with no visas condition
+        # 0 visas storage
+        visa_storage = VisaStorage.objects.create(
+            total_visas=0,
+            remaining_visas=0
+        )
+        
+        visa_order = VisaOrder.objects.create(
+            user=User.objects.get(username="testuser"),
+            passport_number="1234 567890",
+            status=VisaOrder.Status.PENDING
+        )
+        
+        res = user_client.post(f'/api/v2/orders/{visa_order.id}/approve/', {})
+        
+        assert res.status_code == 400
+        assert "No visas available" in res.data['error']
+        
+        # quantity not changed
+        visa_storage.refresh_from_db()
+        assert visa_storage.remaining_visas == 0
+        
+        # and order with 'pending' status
+        visa_order.refresh_from_db()
+        assert visa_order.status == 'pending'
+        
+        # OrderApproval was not created
+        assert OrderApproval.objects.count() == 0
+    
+    def test_approve_v2_low_visas_warning(self, user_client, passport_with_owner):
+        #test for low visa count warning (<=1)
+        # 1 visa storage
+        visa_storage = VisaStorage.objects.create(
+            total_visas=1,
+            remaining_visas=1
+        )
+        
+        visa_order = VisaOrder.objects.create(
+            user=User.objects.get(username="testuser"),
+            passport_number="1234 567890",
+            status=VisaOrder.Status.PENDING
+        )
+        
+        res = user_client.post(f'/api/v2/orders/{visa_order.id}/approve/', {})
+        
+        assert res.status_code == 200
+        assert res.data['remaining_visas'] == 0
+        assert res.data['low_visas'] == True 
