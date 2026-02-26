@@ -8,12 +8,15 @@ from rest_framework_simplejwt.views import (
 
 from core.views.passport_views import PassportViewSet
 from core.views.auth_views import RegisterView, LogoutView
-from core.views.staff_views import StaffPassportViewSet
-#RegisterView, LogoutView, StaffPassportViewSet
+from core.views.staff_views import StaffPassportViewSet, StaffVisaViewSet
+from core.views.visa_views import VisaOrderViewSetV1, VisaOrderViewSetV2
 
 router = DefaultRouter()
 router.register(r'passports', PassportViewSet, basename='passport')
 router.register(r'staff/passports', StaffPassportViewSet, basename='staff-passport')
+router.register(r'v1/orders', VisaOrderViewSetV1, basename='v1-visa-order')
+router.register(r'v2/orders', VisaOrderViewSetV2, basename='v2-visa-order')
+router.register(r'staff/visa', StaffVisaViewSet, basename='staff-visa')
 
 urlpatterns = [
     path('admin/', admin.site.urls),
