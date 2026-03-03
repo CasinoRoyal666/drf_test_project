@@ -11,6 +11,8 @@ from core.views.auth_views import RegisterView, LogoutView
 from core.views.staff_views import StaffPassportViewSet, StaffVisaViewSet
 from core.views.visa_views import VisaOrderViewSetV1, VisaOrderViewSetV2
 
+from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
+
 router = DefaultRouter()
 router.register(r'passports', PassportViewSet, basename='passport')
 router.register(r'staff/passports', StaffPassportViewSet, basename='staff-passport')
@@ -21,6 +23,12 @@ router.register(r'staff/visa', StaffVisaViewSet, basename='staff-visa')
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include(router.urls)),
+
+     # Swagger
+    path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
+    path('api/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
+    path('api/redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
+    
     # auth
     path('api/auth/register/', RegisterView.as_view(), name='register'),
     path('api/auth/login/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
