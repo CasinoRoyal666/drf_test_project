@@ -24,6 +24,28 @@ class Passport(TimestampMixin):
     def __str__(self):
         return f"Passport: {self.full_name}"
 
+# two new models: PassportCore and PassportDetails - needed to test different levels of tran. isolation
+class PassportCore(TimestampMixin):
+    owner = models.OneToOneField(User, on_delete=models.CASCADE, related_name='passport_cores')
+
+    def __str__(self):
+        return f"Core for {self.owner.username}"
+
+class PassportDetails(TimestampMixin):
+    core = models.ForeignKey(PassportCore, on_delete=models.CASCADE, related_name='details')
+    passport_number = models.CharField(max_length=20)
+    full_name = models.CharField(max_length=50)
+    adress = models.CharField(max_length=100)
+
+    class Meta:
+        #garant unique passaport number x core (linked to user) pair
+        unique_together = ('core', 'passport_number')
+
+    def __str__(self):
+        return f"Details: {self.passport_number}"
+    
+
+
 class VisaStorage(TimestampMixin):
     total_visas = models.IntegerField(default=50)
     remaining_visas = models.IntegerField(default=50)
@@ -67,5 +89,6 @@ class OrderApproval(TimestampMixin):
 
     def __str__ (self):
         return f"Approval for Order {self.order.id} by {self.staff_member.username}"
+    
 
 
